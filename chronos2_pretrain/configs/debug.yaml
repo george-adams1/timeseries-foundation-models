@@ -1,0 +1,44 @@
+# Tiny model on toy data to check that the pipeline runs end to end, also on CPU.
+
+output_dir: runs/debug
+
+model:
+  core:
+    d_model: 64
+    d_kv: 16
+    d_ff: 128
+    num_layers: 2
+    num_heads: 4
+    dropout_rate: 0.1
+  chronos:
+    context_length: 512
+    input_patch_size: 16
+    input_patch_stride: 16
+    output_patch_size: 16
+    max_output_patches: 4
+    quantiles: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    use_reg_token: true
+    use_arcsinh: true
+    time_encoding_scale: 512
+
+train:
+  seed: 0
+  learning_rate: 1.0e-3
+  warmup_steps: 5
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  bf16: true
+  log_every: 5
+  save_every: 10
+  keep_last: 2
+
+stages:
+  - {steps: 20, context_length: 128, max_output_patches: 2, batch_size: 16}
+  - {steps: 10, context_length: 512, max_output_patches: 4, batch_size: 8}
+
+data:
+  num_workers: 2
+  min_past: 32
+  max_group_size: 4
+  sources:
+    - {type: callable, fn: "data:toy_task", max_variates: 4}

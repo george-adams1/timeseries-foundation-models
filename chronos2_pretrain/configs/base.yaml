@@ -1,0 +1,63 @@
+# Chronos-2 base (120M parameters).
+#
+# `model` mirrors config.json of amazon/chronos-2. Everything else is a starting point: the authors have not
+# disclosed the optimizer settings, the number of steps, the batch size or the data mixture used for the
+# released checkpoint. The peak learning rate, the weight decay and the 200k steps are borrowed from the
+# original Chronos paper.
+
+output_dir: runs/chronos2-base
+
+model:
+  core:
+    d_model: 768
+    d_kv: 64
+    d_ff: 3072
+    num_layers: 12
+    num_heads: 12
+    dropout_rate: 0.1
+    layer_norm_epsilon: 1.0e-6
+    initializer_factor: 0.05
+    feed_forward_proj: relu
+    rope_theta: 10000.0
+  chronos:
+    context_length: 8192
+    input_patch_size: 16
+    input_patch_stride: 16
+    output_patch_size: 16
+    max_output_patches: 64
+    quantiles: [0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99]
+    use_reg_token: true
+    use_arcsinh: true
+    time_encoding_scale: 8192
+
+train:
+  seed: 0
+  learning_rate: 1.0e-3  # peak, the same on every GPU count; warmup then cosine decay over all stages
+  warmup_steps: 2000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  bf16: true
+  log_every: 50
+  save_every: 5000
+  keep_last: 3
+
+# Two stages as in the Chronos-2 paper: a context length of 2048 with a low maximum number of output patches,
+# then a context length of 8192 with more output patches. The number of output patches is sampled per batch
+# from 1 to `max_output_patches`; the paper does not say what "low" is nor how the steps are split.
+# `batch_size` is per GPU and counts time series, including target(s) and covariates.
+# The stage 2 batch size is a conservative guess, profile the memory usage before a long run.
+stages:
+  - {steps: 160000, context_length: 2048, max_output_patches: 4, batch_size: 256}
+  - {steps: 40000, context_length: 8192, max_output_patches: 64, batch_size: 64}
+
+data:
+  num_workers: 8  # per GPU
+  min_past: 32
+  max_group_size: 32
+  # Placeholders, see data.py for the supported source types.
+  sources:
+    # real data: a `Dataset.save_to_disk` directory or a glob of .parquet / .arrow files
+    - {type: arrow, path: /path/to/chronos_datasets/m4_monthly/*.parquet, column: target, weight: 1.0}
+    - {type: arrow, path: /path/to/GiftEvalPretrain/buildings_900k, column: target, weight: 1.0}
+    # synthetic data: fn(rng, length, **kwargs) -> data.Task
+    - {type: callable, fn: "my_generators:multivariate_task", weight: 2.0}
